@@ -17,3 +17,16 @@ and to visualize:
 ```bash
 python3 ./nerf/render.py --help
 ```
+
+
+
+### Examples
+
+The following example uses the bulldozer dataset from the original nerf paper to train and visualize. 
+
+![example-bulldozer](./assets/example-bulldozer.png)
+
+
+This next example also plots the camera sphere and the direction of the cameras in the scene. 
+
+![bulldozer-camera-sphere](./assets/bulldozer-camera-sphere.png)

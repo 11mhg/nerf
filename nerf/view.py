@@ -15,6 +15,7 @@ from flax.training.train_state import TrainState
 from nerf.dataloader import generate_rays, stratified_sample
 from nerf.model import Nerf, initialize_model_variables, calculate_alphas
 from nerf.train import render
+from nerf.utils import euler_from_rot_mat, euler_to_rot_mat
 
 
 #def generate_directions(height, width, focal, normalized = False, step_size = 1.):
@@ -170,10 +171,48 @@ def main():
     width = int(image_shape[1])
    
     rr.init("rerun_nerf", spawn = True)
+    rr.log("render/world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, timeless = True)
 
     model, params = initialize_model_from_path(model_weights_path)
     
     poses, focal = get_poses(data_path)
+   
+    all_positions = []
+    all_directions = []
+    for pose in poses:
+        rays = generate_rays(height, width, focal, pose)
+        all_positions.append(rays['origins'].reshape(-1, 3))
+        all_directions.append(rays['directions'].reshape(-1, 3))
+    all_positions = np.stack(all_positions, axis = 0)
+    all_directions = np.stack(all_directions, axis = 0)
+
+    print(all_positions.shape, all_directions.shape)
+
+    rr.log(
+        "render/world/camera-points",
+        rr.Points3D(
+            all_positions[:, 0, :].reshape(-1, 3),
+            colors = (255, 0, 0)
+        ),
+    )
+    rr.log(
+        "render/world/camera-directions",
+        rr.Arrows3D(
+            origins = all_positions[:-1, 0, :].reshape(-1, 3),
+            vectors = np.mean(all_directions[:-1, :, :], axis = 1).reshape(-1, 3),
+            colors = (255, 0, 0)
+        ),
+    )
+
+    rr.log(
+        "render/world/chosen",
+        rr.Arrows3D(
+            origins = all_positions[-1, 0, :].reshape(-1, 3),
+            vectors = np.mean(all_directions[-1, :, :], axis = 0).reshape(-1, 3),
+            colors = (0, 255, 0)
+        )
+    )
+
     starting_pose = poses[0]
     rays = generate_rays(height, width, focal, starting_pose)
     
@@ -182,15 +221,17 @@ def main():
     position = rays['origins'][0]
     direction = rays['directions']
 
-    visualize_rays(rays['origins'], direction)
+    #visualize_rays(rays['origins'], direction)
+
+
     points, t_vals = sample_from_origin_and_direction(position, direction, num_samples = args.num_samples)
     
-    rr.log(
-        "init/camera_bounds/points",
-        rr.Points3D(
-            points[::25, ::4].reshape((-1,3)),
-        )
-    )
+    #rr.log(
+    #    "init/camera_bounds/points",
+    #    rr.Points3D(
+    #        points[::25, ::4].reshape((-1,3)),
+    #    )
+    #)
     
     render_fn = functools.partial( render,
         params = params,
@@ -226,16 +267,16 @@ def main():
     points = jnp.array(points)
     direction = jnp.array(direction)
     t_vals = jnp.array(t_vals)
-    colours = generate_image(render_fn, points, direction, t_vals)
+    #colours = generate_image(render_fn, points, direction, t_vals)
 
-    rr.log(
-        "camera/pinhole",
-        rr.Pinhole( focal_length = focal, height = height, width = width ),
-    )
-    rr.log(
-        "camera/pinhole",
-        rr.Image(colours),
-    )
+    #rr.log(
+    #    "camera/pinhole",
+    #    rr.Pinhole( focal_length = focal, height = height, width = width ),
+    #)
+    #rr.log(
+    #    "camera/pinhole",
+    #    rr.Image(colours),
+    #)
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def _generate_point_cloud(cloud_point_fn, points, direction, t_vals):
@@ -267,7 +308,6 @@ def main():
         rgba = rgba[filter_mask]
         np_points = np_points[filter_mask]
         
-        rr.log("render/world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, timeless = True)
         rr.log(
             "render/world/point_cloud",
             rr.Points3D(
