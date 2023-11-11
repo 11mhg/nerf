@@ -14,7 +14,7 @@ from flax.training import orbax_utils
 from flax.training.train_state import TrainState
 
 from nerf.dataloader import Nerf_Data, get_dataloader
-from nerf.model import ( 
+from nerf.models.base import ( 
     Nerf, calculate_alphas, 
     calculate_accumulated_transformation, initialize_model_variables
 )
