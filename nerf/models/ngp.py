@@ -1,49 +1,12 @@
 import jax
-import flax 
+import flax
+import optax
 import numpy as np
 from jax import lax
 import jax.numpy as jnp
 import flax.linen as nn
 from typing import Sequence, Tuple
-
-#@jax.jit
-def positional_encoding(position, dims):
-    pos_enc = [position]
-    for L in range(dims):
-        pos_enc.append(jnp.sin(2.**L * jnp.pi * position))
-        pos_enc.append(jnp.cos(2.**L * jnp.pi * position))
-        # pos_enc.append(jnp.sin(2.*jnp.pi*position/L))
-        # pos_enc.append(jnp.cos(2.*jnp.pi*position/L))
-    pos_enc = jnp.concatenate(pos_enc, axis = -1)
-    return pos_enc
-
-
-def calculate_accumulated_transformation(alphas):
-    """
-    Calculate the accumulated transformation using the given alphas.
-    
-    This function has a bit of a hack to deal with the fact that it may not
-    accumulate to 1. Instead, it forces it by setting the final value to 1.
-    """
-    # Calculate the cumulative product of 1 minus alphas
-    acc_trans = jnp.cumprod(1. - alphas, axis=-1)
-    
-    # Concatenate a column of ones to the left of acc_trans
-    return jnp.concatenate((jnp.ones((acc_trans.shape[0], 1)), acc_trans[..., :-1]), axis=-1)
-
-
-def calculate_alphas(sigmas, deltas):
-    """Given sigmas and sampling point deltas, calculate the alphas
-
-    Args:
-        sigmas (jnp.array): The sigmas describing the density of the points sampled.
-        deltas (jnp.array): The sampling point deltas.
-
-    Returns:
-        (jnp.array): The alphas describing the density of the points sampled 
-                     after applying the deltas.
-    """
-    return (1. - jnp.exp(-sigmas * deltas))
+from .utils import positional_encoding, calculate_accumulated_transformation, calculate_alphas
 
 def xor_reduce(array):
     """
@@ -65,10 +28,11 @@ def hash_encode(inds, log2_hashmap_size):
     Performs a cumulative xor reduction on the product of the indices and unique primes.
     This cumulative xor reduction then has a modulus operator done on it based on the log2_hashmap_size.
     """
+    # First 3 values are from the paper
     primes = jnp.array([
         1,
-        888659,
-        223711,
+        2654435761,
+        805459861,
         720901,
         375391,
         432433,
@@ -276,6 +240,26 @@ class NerfNGP(nn.Module):
     dtype = jnp.float32
     precision = lax.Precision.DEFAULT
 
+    def get_learning_rate_schedule(self):
+        return optax.exponential_decay(
+            1e-2,
+            50000,
+            0.5,
+            staircase = False,
+            end_value = 1e-4
+        )
+
+    def get_optimizer(self, schedule = None):
+        if schedule is None:
+            schedule = self.get_learning_rate_schedule
+        return optax.chain(
+            optax.adam(
+                learning_rate = schedule,
+                b1 = 0.9,
+                b2 = 0.99,
+                eps = 1e-15
+            )
+        )
     
     @nn.compact
     def __call__(self, position: jnp.array, direction: jnp.array ):
@@ -302,7 +286,7 @@ class NerfNGP(nn.Module):
             y = nn.relu(y)
         density_output = nn.Dense(self.density_out_dim, dtype = self.dtype, precision = self.precision)(y)
 
-        sigma = density_output[...,-1:]
+        sigma = nn.relu(density_output[...,-1:])
 
         # color_mlp_layers
         y = jnp.concatenate(

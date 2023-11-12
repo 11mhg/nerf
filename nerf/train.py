@@ -1,4 +1,4 @@
-import jax
+import os, jax
 import flax 
 import math
 import optax
@@ -13,11 +13,18 @@ import flax.linen as nn
 from flax.training import orbax_utils
 from flax.training.train_state import TrainState
 
+from prefetch_generator import BackgroundGenerator
+
 from nerf.dataloader import Nerf_Data, get_dataloader
+from nerf.models.utils import get_checkpoint_manager, calculate_alphas, calculate_accumulated_transformation
 from nerf.models.base import ( 
-    Nerf, calculate_alphas, 
-    calculate_accumulated_transformation, initialize_model_variables
+    Nerf, initialize_model_variables
 )
+from nerf.models.ngp import (
+    NerfNGP
+)
+from jax import config
+config.update("jax_debug_nans", True)
 
 def render(model: Nerf, params: dict, position: jnp.array, direction: jnp.array, t_vals: jnp.array):
     """
@@ -76,7 +83,6 @@ def train_step(train_state: TrainState, sample: dict):
     
     l, grads = jax.value_and_grad(loss_fn)(train_state.params)
     train_state = train_state.apply_gradients(grads = grads)
-
     return l, train_state
 
 def test_step(train_state: TrainState, sample: dict):
@@ -97,26 +103,17 @@ def train(
         batch_size: int = 512,
         num_epochs: int = 15,
         save_path: str = './model-ckpt',
-        max_to_keep: int = 2
+        max_to_keep: int = 2,
+        model_name: str = 'nerf',
     ):
-
-    orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
-    options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=max_to_keep, create=True)
-    checkpoint_manager = orbax.checkpoint.CheckpointManager(
-        save_path, orbax_checkpointer, options)
+    checkpoint_manager = get_checkpoint_manager(
+        save_path, max_to_keep = max_to_keep, create = True
+    ) 
    
     transition_steps = ((100*100*100)//batch_size) * (num_epochs // 2)
-    schedule = optax.exponential_decay(
-        5e-4, 
-        50000, #transition_steps, 
-        0.5,
-        staircase = False, 
-        end_value = 5e-5
-    )
+    schedule = model.get_learning_rate_schedule() 
 
-    optimizer = optax.chain(
-        optax.adam(learning_rate = schedule),
-    )
+    optimizer = model.get_optimizer(schedule) 
 
     state = TrainState.create(
         apply_fn = functools.partial( render, model = model ),
@@ -143,7 +140,7 @@ def train(
 
 
     best_loss = np.Inf
-    if checkpoint_manager.latest_step() is not None:
+    if checkpoint_manager.latest_step() is not None: 
         print(f"RESTORING FROM CHECKPOINT {checkpoint_manager.latest_step()}")
         state, best_loss = load_fn(checkpoint_manager.latest_step(), state, best_loss)
     else:
@@ -152,7 +149,7 @@ def train(
 
     run = wandb.init(
         project="nerf",
-        name="11/04/2023",
+        name=f"{model_name}",
         config = {
             'batch_size': batch_size,
             'num_epochs': num_epochs
@@ -163,7 +160,7 @@ def train(
     total_test_step_count = 0
     for epoch in range(num_epochs):
         epoch_train_loss = []
-        for ind, sample in enumerate(train_loader):
+        for ind, sample in BackgroundGenerator(enumerate(train_loader), max_prefetch = 100):
             num_batches = math.ceil(sample['image'].shape[0] / batch_size)
             for batch_ind in range(num_batches):
                 batch_sample = {
@@ -185,7 +182,7 @@ def train(
                 }, step = state.step)
                 epoch_train_loss.append(float(l))
                 total_train_step_count += 1
-                if total_train_step_count % 100 == 0:
+                if total_train_step_count % 10 == 0:
                     print(f"Epoch: {epoch} train_step: {total_train_step_count} Loss: {np.mean(epoch_train_loss)}")
         
         epoch_test_loss = []
@@ -234,14 +231,35 @@ def train(
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog = "TrainNerf",
+        description = "Train a nerf model"
+    )
+    parser.add_argument('--dataset', '-d', type=str, help="The dataset to use for training the nerf model.",
+        default = "./tiny_nerf_data.npz"
+    )
+    parser.add_argument('--model', '-m', type=str, help="The model to use: nerf or ngp. Defaults to nerf.",
+        default = "nerf"
+    )
+    parser.add_argument('--save-path', '-s', type=str, help = "The save path for the model checkpoints.",
+        default = "./model-ckpt"
+    )
+    parser.add_argument('--batch_size', type=int, help = "The batch size for training.", default=512)
+    args = parser.parse_args()
+
+    train_dl, test_dl, bounding_box = get_dataloader(args.dataset)
+
     model = Nerf()
+    if "ngp" in args.model.lower():
+        model = NerfNGP(bounding_box = bounding_box)
+
     key = jax.random.key(0)
 
     params, key = initialize_model_variables(model, key)
 
-    train_dl, test_dl = get_dataloader('./tiny_nerf_data.npz')
-
-    train(model, params, train_dl, test_dl)
+    os.makedirs(args.save_path,exist_ok = True)
+    train(model, params, train_dl, test_dl, batch_size=args.batch_size, save_path = args.save_path, model_name = args.model)
 
 
 
