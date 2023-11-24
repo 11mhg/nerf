@@ -1,51 +1,12 @@
 import jax
 import flax 
+import optax 
 import numpy as np
 from jax import lax
 import jax.numpy as jnp
 import flax.linen as nn
 from typing import Sequence
-
-#@jax.jit
-def positional_encoding(position, dims):
-    pos_enc = [position]
-    for L in range(dims):
-        pos_enc.append(jnp.sin(2.**L * jnp.pi * position))
-        pos_enc.append(jnp.cos(2.**L * jnp.pi * position))
-        # pos_enc.append(jnp.sin(2.*jnp.pi*position/L))
-        # pos_enc.append(jnp.cos(2.*jnp.pi*position/L))
-    pos_enc = jnp.concatenate(pos_enc, axis = -1)
-    return pos_enc
-
-
-def calculate_accumulated_transformation(alphas):
-    """
-    Calculate the accumulated transformation using the given alphas.
-    
-    This function has a bit of a hack to deal with the fact that it may not
-    accumulate to 1. Instead, it forces it by setting the final value to 1.
-    """
-    # Calculate the cumulative product of 1 minus alphas
-    acc_trans = jnp.cumprod(1. - alphas, axis=-1)
-    
-    # Concatenate a column of ones to the left of acc_trans
-    return jnp.concatenate((jnp.ones((acc_trans.shape[0], 1)), acc_trans[..., :-1]), axis=-1)
-
-
-def calculate_alphas(sigmas, deltas):
-    """Given sigmas and sampling point deltas, calculate the alphas
-
-    Args:
-        sigmas (jnp.array): The sigmas describing the density of the points sampled.
-        deltas (jnp.array): The sampling point deltas.
-
-    Returns:
-        (jnp.array): The alphas describing the density of the points sampled 
-                     after applying the deltas.
-    """
-    return (1. - jnp.exp(-sigmas * deltas))
-
-
+from .utils import positional_encoding, calculate_alphas, calculate_accumulated_transformation
 
 
 class Nerf(nn.Module):
@@ -57,6 +18,22 @@ class Nerf(nn.Module):
     # Following from nerf paper: https://arxiv.org/pdf/2003.08934.pdf
     position_encoding_dims: int = 10
     direction_encoding_dims: int = 4
+
+    def get_learning_rate_schedule(self):
+        return optax.exponential_decay(
+            5e-4,
+            50000,
+            0.5,
+            staircase = False,
+            end_value = 5e-5
+        )
+
+    def get_optimizer(self, schedule = None):
+        if schedule is None:
+            schedule = self.get_learning_rate_schedule()
+        return optax.chain(
+            optax.adam(learning_rate = schedule),
+        )
     
     @nn.compact
     def __call__(self, position: jnp.array, direction: jnp.array ):
@@ -105,7 +82,7 @@ class Nerf(nn.Module):
         return rgb, sigma
         
 
-def initialize_model_variables(model: Nerf, key: jax.random.PRNGKey):
+def initialize_model_variables(model, key: jax.random.PRNGKey):
     """
     Initializes the model variables using prng key.
 

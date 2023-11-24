@@ -1,0 +1,9 @@
+prefetch-generator==1.0.3
+numpy==1.25.2
+rerun-sdk==0.10.1
+flax==0.7.5
+jax==0.4.20
+jaxlib @ file:///opt/jax-source/dist/jaxlib-0.4.14-cp310-cp310-linux_x86_64.whl#sha256=81bbb62644bfbd10c8a5a64248ef28221fa3c4ad4248927590eefd022ffd57ae
+optax==0.1.7
+orbax-checkpoint==0.3.5
+trax==1.4.1

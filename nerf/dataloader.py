@@ -1,6 +1,7 @@
 import jax
 import flax
 import optax
+import random
 import numpy as np
 from jax import lax
 import jax.numpy as jnp
@@ -144,11 +145,29 @@ class Nerf_Data:
     def prep_data(self):        
         height, width = self.images.shape[1:3]
         
+        min_bound = jnp.array([100, 100, 100])
+        max_bound = jnp.array([-100, -100, -100])
+
         for ind in range(self.poses.shape[0]):
             pose = self.poses[ind]
             rays = generate_rays(height, width, self.focal, pose)
             self.ray_directions.append(rays['directions'])
             self.ray_origins.append(rays['origins'])
+
+            min_points = self.ray_origins[-1] + (self.near_bound * self.ray_directions[-1])
+            max_points = self.ray_origins[-1] + (self.far_bound * self.ray_directions[-1])
+            
+            min_points = jnp.amin(min_points, axis = 0)
+            max_points = jnp.amax(max_points, axis = 0)
+
+            min_bound = jnp.minimum( min_points, min_bound)
+            max_bound = jnp.maximum( max_points, max_bound)
+
+        self.bounding_box = (
+            min_bound - jnp.array([1, 1, 1]),
+            max_bound + jnp.array([1, 1, 1])
+        )
+
         self.inds = list(range(len(self.ray_origins)))
         return
     
@@ -183,8 +202,6 @@ class Nerf_Data:
             
         return
         #raise StopIteration
-        
-
 
 def get_dataloader( data_path: str, batch_size: int = 32, rng = jax.random.PRNGKey(0) ):
     """
@@ -196,7 +213,7 @@ def get_dataloader( data_path: str, batch_size: int = 32, rng = jax.random.PRNGK
         rng (jax.random.PRNGKey, optional): The random seed for the dataloader. Defaults to jax.random.PRNGKey(0).
 
     Returns:
-        Tuple[Nerf_Data, Nerf_Data]: A tuple containing the train and test dataloaders.
+        Tuple[Nerf_Data, Nerf_Data, jnp.ndarray]: A tuple containing the train and test dataloaders and the bounding box bounds.
     """
     
     raw_data = np.load(data_path)
@@ -210,23 +227,40 @@ def get_dataloader( data_path: str, batch_size: int = 32, rng = jax.random.PRNGK
         
     train_dl = Nerf_Data(train_images, train_poses, focal, rng = train_rng, batch_size = batch_size)
     test_dl = Nerf_Data(test_images, test_poses, focal, rng = test_rng, batch_size = batch_size)
+    
+    return train_dl, test_dl, train_dl.bounding_box
 
-    return train_dl, test_dl
+
 
 if __name__ == "__main__":
-    
-    train_dl, test_dl = get_dataloader('./tiny_nerf_data.npz')    
-    
-    max_pos, min_pos = 0, 0
-    max_dir, min_dir = 0, 0
-    for elem in train_dl:
-        for key in elem:
-            if key == 'position':
-                max_pos = max(max_pos, elem[key].max())
-                min_pos = min(min_pos, elem[key].min())
-            elif key == 'direction':
-                max_dir = max(max_dir, elem[key].max())
-                min_dir = min(min_dir, elem[key].min())
-    
-    print(max_pos, min_pos)
-    print(max_dir, min_dir)
+    import rerun as rr
+    import matplotlib.pyplot as plt
+
+    train_dl, test_dl, bounding_box = get_dataloader('./tiny_nerf_data.npz')    
+
+    from nerf.generate_video import generate_path_and_directions
+    generate_path_and_directions(train_dl)
+
+
+        #for elem in range(len(ray_origins)):
+    #    origin = ray_origins[elem][0]
+    #    mean_direction = np.mean(ray_directions[elem], axis = 0)
+    #    rr.log("render/world/camera-points",
+    #           rr.Points3D(
+
+    #           )
+    #max_pos, min_pos = 0, 0
+    #max_dir, min_dir = 0, 0
+    #for elem in train_dl:
+    #    for key in elem:
+    #        if key == 'position':
+    #            max_pos = max(max_pos, elem[key].max())
+    #            min_pos = min(min_pos, elem[key].min())
+    #        elif key == 'direction':
+    #            print(elem[key].shape)
+    #            input("W")
+    #            max_dir = max(max_dir, elem[key].max())
+    #            min_dir = min(min_dir, elem[key].min())
+    #
+    #print(max_pos, min_pos)
+    #print(max_dir, min_dir)

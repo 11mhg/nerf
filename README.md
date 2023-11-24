@@ -22,6 +22,8 @@ python3 ./nerf/render.py --help
 
 ### Examples
 
+![Example Graphics of Nerf at novel viewpoints](./assets/nerf-example.gif)
+
 The following example uses the bulldozer dataset from the original nerf paper to train and visualize. 
 
 ![example-bulldozer](./assets/example-bulldozer.png)

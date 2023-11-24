@@ -13,7 +13,7 @@ import orbax.checkpoint
 from flax.training.train_state import TrainState
 
 from nerf.dataloader import generate_rays, stratified_sample
-from nerf.model import Nerf, initialize_model_variables, calculate_alphas
+from nerf.models.base import Nerf, initialize_model_variables, calculate_alphas
 from nerf.train import render
 from nerf.utils import euler_from_rot_mat, euler_to_rot_mat
 
